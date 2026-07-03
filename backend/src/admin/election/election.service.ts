@@ -1,16 +1,45 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateElectionDto } from './dto/create-election.dto';
 import { UpdateElectionDto } from './dto/update-election.dto';
 import { ResultsService } from '../results/results.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class ElectionService {
+  private readonly logger = new Logger(ElectionService.name);
+
   constructor(
     private prisma: PrismaService,
     private resultsService: ResultsService
   ) {}
+
+  // ─── Automated Election Lifecycle ────────────────────────────────────────
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleElectionTransitions() {
+    const now = new Date();
+
+    // Auto-OPEN elections whose startTime has passed and are still in draft
+    const toOpen = await this.prisma.election.findMany({
+      where: { status: 'draft', startTime: { lte: now }, NOT: { startTime: null } },
+      select: { id: true, title: true },
+    });
+    for (const election of toOpen) {
+      await this.prisma.election.update({ where: { id: election.id }, data: { status: 'open' } });
+      this.logger.log(`⏰ Auto-OPENED election: "${election.title}" (${election.id})`);
+    }
+
+    // Auto-CLOSE elections whose endTime has passed and are still open
+    const toClose = await this.prisma.election.findMany({
+      where: { status: 'open', endTime: { lte: now }, NOT: { endTime: null } },
+      select: { id: true, title: true },
+    });
+    for (const election of toClose) {
+      await this.prisma.election.update({ where: { id: election.id }, data: { status: 'closed' } });
+      this.logger.log(`⏰ Auto-CLOSED election: "${election.title}" (${election.id})`);
+    }
+  }
 
   async create(createElectionDto: CreateElectionDto) {
     // Generate RSA Keypair (2048-bit)
