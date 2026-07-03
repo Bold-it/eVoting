@@ -1,0 +1,146 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --shadow-card: 0 1px 2px 0 rgb(22 33 58 / 0.04), 0 1px 3px 0 rgb(22 33 58 / 0.06);
+  --shadow-elevated: 0 4px 16px -2px rgb(27 76 160 / 0.10), 0 2px 6px -1px rgb(22 33 58 / 0.06);
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /* HTU Brand */
+  --htu-blue: oklch(0.448 0.157 258);          /* #1B4CA0 */
+  --htu-blue-strong: oklch(0.40 0.17 258);
+  --htu-red: oklch(0.566 0.222 25);             /* #D61F28 */
+
+  --background: oklch(1 0 0);                    /* #FFFFFF */
+  --foreground: oklch(0.224 0.038 260);          /* #16213A */
+  --surface: oklch(0.974 0.008 250);             /* #F2F5FA */
+
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+
+  --primary: var(--htu-blue);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: var(--surface);
+  --secondary-foreground: var(--foreground);
+
+  --muted: var(--surface);
+  --muted-foreground: oklch(0.55 0.02 257);      /* #6B7280 */
+
+  --accent: oklch(0.95 0.025 258);
+  --accent-foreground: var(--htu-blue);
+
+  --destructive: var(--htu-red);
+  --destructive-foreground: oklch(1 0 0);
+
+  --success: oklch(0.72 0.17 152);               /* #22C55E */
+  --success-foreground: oklch(1 0 0);
+
+  --border: oklch(0.91 0.012 255);
+  --input: oklch(0.91 0.012 255);
+  --ring: var(--htu-blue);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html, body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .htu-card {
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-top: 3px solid var(--color-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+  }
+}
+
+/* Respect OS-level reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .motion-safe-only {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@layer utilities {
+  .motion-safe {
+    @media (prefers-reduced-motion: reduce) {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+
+  .motion-safe-scroll {
+    scroll-behavior: smooth;
+
+    @media (prefers-reduced-motion: reduce) {
+      scroll-behavior: auto;
+    }
+  }
+}
+

@@ -1,0 +1,597 @@
+﻿--- START DOC 1 ---
+Backend Build Phases
+HTU Secure Online Voting System
+A sequenced, checklist-driven build order for all 8 backend modules
+Team BlackNodes
+CodeFest Hackathon  |  June 2026
+How to Use This Document
+This document sequences the 8 backend modules from the Backend Requirements Specification into 6 build phases, in dependency order ΓÇö each phase assumes the prior ones are working before it starts. Use the checklists in each phase as a literal sprint checklist: check items off as your team completes them, and do not start a phase's checklist until the previous phase's checklist is fully checked.
+This document does not replace the Backend Requirements Specification or the SRS ΓÇö it tells you WHEN to build each piece those documents already specify in full detail. Refer back to them for exact schemas, endpoint contracts, and business rules.
+PHASE 1
+Foundation ΓÇö Authentication & Access Control
+Module(s): AuthModule
+Nothing else in the system can be meaningfully tested without this module working first. Build and test it in complete isolation before touching anything else.
+1.1 What This Phase Delivers
+Voter login: Student ID + token ΓåÆ short-lived, election-scoped JWT
+Admin login: email + password ΓåÆ access token + refresh token
+JWT verification guard, used by every other module from Phase 2 onward
+Role-based guard distinguishing super_admin, election_officer, and the voter scope
+Refresh token rotation and admin logout (revocation)
+1.2 Checklist
+AdminUser and RefreshToken tables migrated and seedable with a test admin account
+POST /api/v1/auth/admin/login returns access + refresh tokens for valid credentials
+POST /api/v1/auth/admin/login returns identical error/timing for wrong password vs. non-existent email (no user enumeration)
+POST /api/v1/auth/voter/login rejects invalid token, used token, and wrong-election token distinctly per the API contract
+JWT Guard rejects expired and tampered tokens with 401
+Role Guard rejects a voter JWT calling any admin endpoint, and vice versa
+Rate limiting active on both login endpoints (5/15min) and returns 429 with Retry-After
+Unit tests for: valid login, invalid credentials, expired token, wrong role ΓÇö all passing
+PHASE 2
+Election Setup
+Module(s): ElectionModule, CandidateModule, VoterModule
+These three modules are grouped because they are all admin-side configuration ΓÇö nothing here involves a real vote yet. They can be built in parallel by different teammates once Phase 1 is solid, since they don't depend on each other, only on Auth.
+2.1 What This Phase Delivers
+Election creation, position management, counting-method configuration (plurality / simple majority + fallback)
+Election open/close state machine with the full readiness checklist enforced server-side
+Candidate CRUD with attached portfolio (manifesto, credentials, photo)
+Voter roll bulk upload (CSV) with row-level validation and rejection reporting
+Voter token generation (hashes only ΓÇö plaintext never stored)
+Config lock: positions, candidates, and voter roll become immutable once the election opens
+2.2 Checklist
+POST /elections creates a draft election; PATCH is blocked (423) once status leaves draft
+Position creation rejects simple_majority without a majorityFallback value (400)
+POST /elections/:id/open runs the full readiness checklist and returns structured 422 with unmetConditions if anything is missing
+Candidate and portfolio CRUD enforces the manifesto character limit and strips HTML/script tags from free text
+Candidate photo upload validates file type by content-sniffing, not just file extension
+CSV voter roll upload returns per-row validation results (validRows / rejectedRows with reasons)
+Token generation stores only argon2id hashes; a query of the database confirms no plaintext token exists anywhere
+All three modules correctly return 423 Locked on any edit attempt after the parent election is open
+PHASE 3
+Getting Tokens to Voters
+Module(s): NotificationModule
+This phase depends on Phase 2 (voters and tokens must exist to email). It is its own phase because email delivery is asynchronous and has its own failure modes worth testing in isolation before voting depends on it.
+3.1 What This Phase Delivers
+Nodemailer configured against Google Workspace SMTP (smtp.gmail.com, port 587, STARTTLS, App Password auth)
+BullMQ job queue: one email job per voter, enqueued on token generation, processed asynchronously
+Retry logic: up to 3 attempts with exponential backoff before marking a delivery permanently failed
+Delivery status tracking (pending / sent / failed) exposed to the admin dashboard
+Resend-token endpoint, deliberately exempt from the election-open lock
+3.2 Checklist
+POST /elections/:id/voters/generate-tokens returns 202 immediately with a batch ID, not blocking on actual sending
+A real test email successfully arrives via the Workspace account using an App Password (not a personal password)
+Simulated send failure (e.g. invalid email) results in 3 retries, then status = failed, visible via GET /voters/delivery-status
+POST /voters/:voterId/resend-token works correctly even while the election status is open
+Email content reviewed: no plaintext word 'password', token only usable together with Student ID, sent only to the verified roll email
+PHASE 4
+The Critical Path ΓÇö Vote Casting
+Module(s): VotingModule
+This is the highest-stakes module in the entire system. Do not rush it, and do not consider it done until the concurrency test in the checklist below passes ΓÇö not just the happy path.
+4.1 What This Phase Delivers
+Ballot retrieval (positions, candidates, portfolios) for an authenticated voter session
+Vote submission with: row-level lock on the voter's token, one-vote enforcement inside that lock, ballot payload validation, AES-256-GCM encryption with a fresh IV per vote, hash-chain append, all in a single atomic transaction
+Idempotency-Key support so a dropped network response can be safely retried without double-counting
+Vote receipt issuance and immediate session invalidation
+4.2 Checklist
+GET /elections/:id/ballot returns positions + candidates + portfolios correctly scoped to the voter's election
+POST /votes succeeds exactly once per token and returns a receipt code not derived from vote content
+Malformed ballots (missing position, unknown candidateId, duplicate position entries) are rejected with 400, never silently accepted
+CONCURRENCY TEST: N simultaneous requests using the SAME token ΓÇö exactly one succeeds (201), all others receive 409, and exactly one VoteRecord exists afterward
+CONCURRENCY TEST: N simultaneous requests using N DIFFERENT valid tokens ΓÇö all succeed, and the resulting hash chain has exactly N correctly linked entries
+IDEMPOTENCY TEST: same Idempotency-Key submitted twice returns the original receipt, not a second vote
+Database inspection confirms VoteRecord has no voterId, sessionId, or IP column ΓÇö anonymity is structural, not just policy
+No application log line contains both a voter identity and any vote-cast detail in the same entry
+PHASE 5
+After the Polls Close
+Module(s): TallyModule
+This phase needs real VoteRecord data to test meaningfully ΓÇö run it against the votes produced during Phase 4's tests, plus a few hand-crafted scenarios for tie and majority-shortfall cases.
+5.1 What This Phase Delivers
+Hash-chain integrity verification across an election's full vote sequence
+Per-position tally computation respecting each position's countingMethod
+Tie detection and majority-shortfall detection, with abstentions excluded from the majority percentage denominator
+Runoff creation, scoped to tied/top-two candidates and the original voter roll
+Results publication, gated on integrity verification passing and every position being resolved
+5.2 Checklist
+POST /elections/:id/verify-integrity correctly returns verified: true on an untouched chain
+Manually corrupting one VoteRecord's stored hash causes verify-integrity to return verified: false with the correct brokenAt index
+GET /elections/:id/tally-review correctly computes a clear-winner scenario, a tie scenario, and a no-majority-reached scenario (test with crafted data for the latter two)
+Abstention counts are confirmed excluded from the majority percentage calculation by direct test, not just code review
+POST /elections/:id/results/publish is blocked (422) while any position is unresolved, and succeeds once all are resolved
+GET /elections/:id/results returns 404 (not 403) for any election not yet in results_published status
+PHASE 6
+Threaded Throughout ΓÇö Audit Logging
+Module(s): AuditModule
+Unlike Phases 1-5, this module is not a discrete sequential step ΓÇö build a minimal version early (during Phase 1) and revisit it as each subsequent phase is built, since every module above needs to call into it.
+6.1 What This Phase Delivers
+Append-only audit log: every admin/system action recorded, with no update or delete path exposed anywhere
+Vote-related audit entries record only the event ("vote cast"), never which voter or any vote content
+Paginated, filterable retrieval restricted to super_admin only
+6.2 Integration Points (revisit as each phase completes)
+After Phase
+Audit Events to Confirm Are Logged
+1 ΓÇö Auth
+Admin login success/failure, admin logout
+2 ΓÇö Election Setup
+Election created, position added, candidate added/edited, voter roll uploaded, tokens generated, election opened/closed
+3 ΓÇö Notification
+Token resend triggered (who triggered it, not which voter's content)
+4 ΓÇö Voting
+"Vote cast" event only ΓÇö explicitly verify no voter identity appears in this entry
+5 ΓÇö Tally
+Integrity check run (pass/fail), runoff triggered, results published
+6.3 Checklist
+AuditLogEntry has no PATCH or DELETE endpoint anywhere in the API
+GET /audit-log is callable only by super_admin (403 for election_officer)
+Every event in the table above is confirmed present in the log after exercising that phase's flows
+--- END DOC 1 ---
+
+
+--- START DOC 2 ---
+Software Requirements Specification
+COMPSSA Secure Online Voting System
+A secure, scalable, production-ready e-voting platform built for CodeFest
+Prepared by Team BlackNodes
+CodeFest Hackathon Submission
+Version 1.0  |  June 2026
+Table of Contents
+1. Introduction
+1.1 Purpose
+This document specifies the functional and non-functional requirements for the COMPSSA Secure Online Voting System, developed by Team BlackNodes for the CodeFest Hackathon. The system enables eligible Computer Science Student Association (COMPSSA) members to securely cast votes in association elections (e.g. President, Vice President, Secretary, Treasurer) through a digital platform, replacing manual paper-based or unsecured voting methods.
+The system is designed as a foundation that can scale beyond COMPSSA to other student associations, departments, or university-wide elections without architectural changes ΓÇö only configuration (voter list, candidate list, election rules) changes per deployment.
+1.2 Scope
+The system covers the full election lifecycle: election creation and configuration by an administrator, secure voter authentication, one-person-one-vote ballot casting, real-time tallying, and transparent, tamper-evident results publication.
+In scope:
+Admin-managed election setup (positions, candidates, voter roll, election window)
+Secure, token-based voter authentication (no public self-registration)
+Single-use voting tokens to enforce one vote per eligible voter
+Encrypted, anonymized vote storage (vote content is never linked to voter identity in storage)
+Tamper-evident vote logging (hash-chained vote records)
+Real-time turnout monitoring dashboard for admins
+Automated, auditable result computation and publication
+Out of scope (for hackathon/MVP phase):
+Biometric verification (fingerprint/facial recognition)
+Blockchain network deployment (a lightweight hash-chain simulates blockchain-style integrity instead)
+Multi-language localization
+SMS gateway integration (token delivery is via email/admin export for MVP)
+1.3 Intended Audience
+CodeFest hackathon judges evaluating architecture, security, UX, and production readiness
+Team BlackNodes developers (implementation reference)
+COMPSSA electoral committee (system operators / admins)
+COMPSSA student voters (end users)
+1.4 Definitions, Acronyms, and Abbreviations
+ID
+Requirement
+Description
+COMPSSA
+Computer Science Student Association
+The student body this MVP is scoped for
+Voter Token
+One-time access credential
+Unique code/PIN issued to each eligible voter; consumed on vote cast
+Election Window
+Time-bound voting period
+Start and end timestamps during which votes may be cast
+Hash Chain
+Tamper-evidence mechanism
+Each vote record includes the hash of the previous record, making silent alteration detectable
+RBAC
+Role-Based Access Control
+Access permissions assigned by role: Super Admin, Election Officer, Voter
+SRS
+Software Requirements Specification
+This document
+1.5 References
+IEEE 830 Software Requirements Specification standard (structural reference)
+OWASP Top 10 Web Application Security Risks
+CodeFest Hackathon judging rubric: Architecture & Scalability, Security & Vulnerability Management, UI/UX & Workflow, Production Readiness
+2. Overall Description
+2.1 Product Perspective
+The system is a standalone, self-contained web application (with a mobile-responsive interface) composed of three logical layers: a Voter Web App, an Admin Dashboard, and a backend API with supporting services (authentication, vote processing, tallying, audit logging). It does not depend on COMPSSA's existing systems for this MVP but is designed with clean API boundaries so it could later integrate with HTU's official student records system for automatic voter roll import.
+2.2 Product Functions (Summary)
+Election creation and configuration by administrators
+Bulk voter roll upload and unique token generation
+Secure voter login using Student ID + one-time token
+Ballot presentation and single vote submission per position
+Vote encryption, anonymization, and tamper-evident storage
+Real-time turnout statistics for administrators
+Automated tallying and results publication after election close
+Full audit trail of system and admin actions (not vote content)
+2.3 User Classes and Characteristics
+ID
+Requirement
+Description
+Super Admin
+Electoral Commissioner
+Full system access ΓÇö creates elections, manages admins, views audit logs, can void/recount under documented procedure
+Election Officer
+Assistant electoral staff
+Manages candidates and voter roll for a specific election; cannot alter votes or system config
+Voter
+COMPSSA student
+Authenticates with token, casts one vote per position per election, views own vote receipt (not vote content)
+2.4 Operating Environment
+Client: Modern web browsers (Chrome, Firefox, Edge, Safari) on desktop and mobile
+Server: Node.js runtime, containerized via Docker
+Database: PostgreSQL (primary data store), Redis (caching/session/rate-limiting)
+Hosting: Cloud platform (e.g. Railway, Render, or Supabase-managed infrastructure)
+2.5 Design and Implementation Constraints
+Must be demoable within hackathon time constraints ΓÇö no dependency on paid SMS gateways for MVP
+Must run fully containerized for judges to deploy/verify easily
+All secrets/config via environment variables ΓÇö never hardcoded
+Must function correctly under simulated concurrent voting load (race-condition safety)
+2.6 Assumptions and Dependencies
+COMPSSA electoral committee provides the verified voter roll (Student ID, Name, and institutional email) before each election
+Each voter has access to a device with a modern browser during the election window
+Hosting provider offers HTTPS by default or via reverse proxy (e.g. Let's Encrypt)
+3. System Architecture
+3.1 Architectural Style
+The system follows a modular, service-oriented architecture within a single deployable backend (a 'modular monolith') ΓÇö giving hackathon-feasible delivery speed now, with clean internal boundaries that allow extraction into independent microservices later without rewrites. This directly addresses the scalability criterion: the architecture demonstrates a clear growth path rather than a one-off script.
+3.1.1 Core Services
+ID
+Requirement
+Description
+Auth Service
+Identity & access
+Validates Student ID + token pairs, issues short-lived JWT session tokens, enforces RBAC
+Election Service
+Election lifecycle
+Create/configure elections, manage candidates, positions, and election windows
+Voting Service
+Ballot casting
+Validates voter eligibility, enforces one-vote rule, encrypts and stores vote, appends to hash chain
+Tally Service
+Result computation
+Aggregates encrypted votes after election close, computes results, verifies hash chain integrity before publishing
+Audit Service
+Action logging
+Immutable log of all admin and system actions (election created, token issued, vote cast event ΓÇö not content, results published)
+Notification Service
+Token delivery
+Sends voting-token emails to each voter on roll upload, handles resend requests, and tracks delivery status, via an asynchronous job queue so bulk sends don't block election setup
+3.2 Scalability Strategy
+Stateless API layer behind a load balancer ΓÇö horizontal scaling by adding instances under voting-day traffic spikes
+Redis used for caching live turnout counts and rate-limiting, reducing direct database load during peak voting periods
+Database writes for vote casting are wrapped in atomic transactions with row-level locking on the voter's token record, preventing double-vote race conditions under concurrent load
+Asynchronous job queue for non-critical tasks (e.g. notification emails, audit log writes) so the vote-casting path stays fast
+Architecture designed to extend from COMPSSA (hundreds of voters) to university-wide elections (thousands of voters) by scaling the same components ΓÇö no redesign required
+3.3 High-Level Data Flow
+Admin creates an election and uploads the voter roll.
+System generates a unique, single-use voting token per voter and makes it available for secure distribution (e.g. admin export, email).
+Voter logs in with Student ID + token; Auth Service validates and issues a short-lived session.
+Voter views the ballot and submits selections; Voting Service validates eligibility and that the token is unused.
+Vote is encrypted, detached from voter identity, and appended to the hash chain; the token is immediately invalidated.
+Voter receives a vote receipt (proof of participation, not vote content).
+After the election window closes, Tally Service verifies the hash chain integrity, then computes and publishes results.
+4. Functional Requirements
+4.1 Election Management (Admin)
+ID
+Requirement
+Description
+FR-1.1
+Create Election
+Admin can create an election with a title, description, position list, and start/end window
+FR-1.2
+Manage Candidates
+Admin can add, edit, or remove candidates per position before the election opens
+FR-1.3
+Attach Candidate Portfolio
+Admin can add a portfolio to each candidate: photo, manifesto/personal statement, and key credentials (e.g. past roles, achievements)
+FR-1.4
+Edit Portfolio Pre-Open
+Admin can edit or replace a candidate's portfolio at any time before the election opens
+FR-1.5
+Upload Voter Roll
+Admin can bulk-upload eligible voters (Student ID, Name, institutional email) via CSV
+FR-1.6
+Generate Voter Tokens
+System auto-generates one unique, single-use token per voter on roll upload
+FR-1.7
+Email Tokens Automatically
+On token generation, system automatically emails each voter their unique voting token and a link to the voting portal ΓÇö no manual distribution by admin
+FR-1.8
+Resend Token
+Admin can trigger a resend of a specific voter's token email (e.g. if a voter reports not receiving it), without generating a new token unless the original is invalidated
+FR-1.9
+Delivery Status Visibility
+Admin can see, per voter, whether the token email was sent successfully or failed to deliver
+FR-1.10
+Lock Election Config
+Once an election opens, candidates, portfolios, and voter roll become immutable to prevent tampering
+FR-1.11
+Close Election
+Admin (or scheduled job) closes the election at the configured end time, after which no votes are accepted
+4.1.1 Candidate Portfolio Fields
+A candidate portfolio is the structured profile voters see on the ballot before choosing. At minimum, each candidate record includes:
+Full name and position contested
+Profile photo
+Manifesto / personal statement (free text, with a reasonable character limit for consistent ballot layout)
+Key credentials or past roles (e.g. previous leadership positions, relevant experience)
+Optional: short video/audio pitch link, for future iterations beyond the hackathon MVP
+4.2 Voter Authentication
+ID
+Requirement
+Description
+FR-2.1
+Token Login
+Voter logs in using Student ID + assigned one-time token
+FR-2.2
+Session Issuance
+On successful login, system issues a short-lived JWT scoped only to that election
+FR-2.3
+Single Use Enforcement
+A token cannot be used to log in a second time after a vote has been cast
+FR-2.4
+Rate Limiting
+Repeated failed login attempts from an account/IP are throttled to prevent brute-force token guessing
+4.3 Ballot and Vote Casting
+ID
+Requirement
+Description
+FR-3.1
+View Ballot
+Authenticated voter sees all open positions and candidates for the current election
+FR-3.2
+View Candidate Portfolio
+Voter can open/expand each candidate's portfolio (photo, manifesto, credentials) directly from the ballot before voting
+FR-3.3
+Select Candidate
+Voter selects exactly one candidate per position (or abstain, if allowed)
+FR-3.4
+Confirm Before Submit
+System shows a confirmation summary before final, irreversible submission
+FR-3.5
+One Vote Enforcement
+System enforces, at the database level, that a voter's token can only be consumed once
+FR-3.6
+Vote Encryption
+Vote content is encrypted before storage and stored separately from voter identity
+FR-3.7
+Vote Receipt
+Voter receives a receipt confirming participation, without revealing or storing their vote choice in a retrievable way
+4.4 Tallying and Results
+ID
+Requirement
+Description
+FR-4.1
+Real-Time Turnout
+Admin dashboard shows live count of votes cast vs. total eligible voters (not vote content)
+FR-4.2
+Integrity Check
+Before tallying, system verifies the hash chain to confirm no vote record was altered
+FR-4.3
+Automated Tally
+On election close, system automatically computes vote totals per candidate per position
+FR-4.4
+Results Publication
+Final results are published to a results page, viewable by all voters once released by admin
+4.5 Audit and Logging
+ID
+Requirement
+Description
+FR-5.1
+Action Logging
+All admin actions (election created, roll uploaded, election closed, results published) are logged immutably
+FR-5.2
+Login Attempt Logging
+All authentication attempts (success/failure) are logged with timestamp, for security review
+FR-5.3
+Audit Access
+Only Super Admin role can view the full audit log
+5. Vote Counting Rules
+These rules govern how a winner is determined once voting closes. They must be configured per election before it opens, locked once voting starts, and recorded in the audit log so the counting method can never be disputed after the fact. Quorum (minimum turnout to validate an election) is explicitly out of scope for this phase and is deferred to a future iteration.
+5.1 Counting Method
+Admin selects one counting method per position at election creation time. The method is then immutable for that election.
+ID
+Requirement
+Description
+Plurality
+Most votes wins
+The candidate with the highest vote count wins outright, even if under 50%. Best for races with 3+ candidates where a runoff isn't practical in the hackathon timeframe.
+Simple Majority
+Over 50% required
+A candidate must receive more than 50% of valid votes cast for that position. If no candidate crosses 50%, the system automatically triggers the Majority Shortfall procedure (Section 5.3).
+For the MVP demo, Simple Majority is the default and recommended mode for COMPSSA executive positions (President, VP, Secretary, etc.), since it best reflects legitimate-mandate expectations for student leadership roles.
+5.2 Tie-Breaking Procedure
+A tie occurs when two or more candidates receive the exact same vote count and that count is the highest for the position. The system must never resolve a tie silently or arbitrarily.
+ID
+Requirement
+Description
+FR-6.1
+Tie Detection
+System automatically detects when the top two (or more) candidates for a position have equal vote counts after tallying
+FR-6.2
+Tie Flagging
+Tied results are flagged as 'Unresolved ΓÇö Tie' on the results page instead of declaring a winner
+FR-6.3
+Runoff Trigger
+Admin can trigger an automatic runoff election limited to the tied candidates, with a new short voting window
+FR-6.4
+Runoff Eligibility
+Only voters from the original eligible roll for that election may vote in the runoff
+FR-6.5
+Audit Record
+The original tie, the decision to run a runoff (or any alternative resolution), and the final outcome are all recorded in the immutable audit log
+Hackathon demo note: a live runoff may not be practical to demo end-to-end in the time available. It is acceptable to demonstrate tie detection and flagging live, and explain the runoff workflow via the architecture/README rather than a full live re-vote.
+5.3 Majority Shortfall Procedure
+Applies only when a position is configured for Simple Majority and no candidate exceeds 50% of valid votes.
+ID
+Requirement
+Description
+FR-6.6
+Shortfall Detection
+System detects when the leading candidate's vote share is 50% or below for a Majority-mode position
+FR-6.7
+Shortfall Flagging
+Result is flagged as 'No Majority Reached' rather than declaring the leading candidate the winner
+FR-6.8
+Runoff Between Top Two
+Admin can trigger a runoff restricted to the top two candidates by vote count, following the same runoff mechanics as Section 5.2
+FR-6.9
+Configurable Fallback
+As an alternative to a runoff, admin may instead configure the election in advance to fall back to Plurality if no majority is reached ΓÇö but this fallback rule must be set before voting opens, never decided after seeing results
+5.4 Abstentions
+ID
+Requirement
+Description
+FR-6.10
+Abstain Option
+Voters may abstain on a given position without it counting as a vote for any candidate
+FR-6.11
+Exclusion from Denominator
+Abstentions are excluded from the 50% majority calculation ΓÇö majority is calculated against valid candidate votes only, not total ballots cast
+FR-6.12
+Abstention Visibility
+Abstention counts are shown separately on the results page for transparency, never merged into candidate totals
+5.5 Why This Matters for Judging
+Production readiness: a real election system that crashes or guesses on a tie is not production-ready ΓÇö explicit, pre-configured rules close that gap
+Security & integrity: locking the counting method and tie-break procedure before voting opens (and logging it) prevents any after-the-fact accusation of manipulating outcomes
+Architecture: counting rules are configuration, not hardcoded logic ΓÇö the same Tally Service supports both Plurality and Majority elections without code changes, reinforcing the scalability story
+6. Non-Functional Requirements
+6.1 Security Requirements
+ID
+Requirement
+Description
+NFR-S1
+Transport Security
+All traffic enforced over HTTPS/TLS; HTTP requests redirected
+NFR-S2
+Password & Token Hashing
+Voter tokens and any admin passwords are stored hashed (e.g. bcrypt/argon2), never in plaintext
+NFR-S3
+Vote Anonymity
+No data path links a stored vote record back to a specific voter identity after submission
+NFR-S4
+Input Validation
+All API inputs are validated and sanitized server-side to prevent SQL injection and XSS
+NFR-S5
+CSRF Protection
+State-changing requests require CSRF tokens or equivalent same-site cookie protections
+NFR-S6
+Rate Limiting
+Login and vote-casting endpoints are rate-limited per IP/account to mitigate brute-force and flooding attacks
+NFR-S7
+Tamper Evidence
+Vote records are hash-chained; any alteration breaks the chain and is detectable before results are published
+NFR-S8
+Least Privilege (RBAC)
+Each role can only access the actions and data explicitly permitted for that role
+NFR-S9
+Secrets Management
+All credentials, DB connection strings, and signing keys are stored in environment variables, never committed to source control
+NFR-S10
+Session Expiry
+Voter sessions expire shortly after issuance and immediately after a vote is cast
+NFR-S11
+Token Email Hygiene
+Token delivery emails never include the word "password," are sent only to the institutional email on the verified voter roll (no user-supplied address), and the token alone is insufficient without the matching Student ID to log in
+6.2 Performance and Scalability
+ID
+Requirement
+Description
+NFR-P1
+Response Time
+95% of vote-casting requests complete in under 1 second under expected COMPSSA-scale load
+NFR-P2
+Concurrent Voting
+System correctly handles concurrent vote submissions without double-counting or data corruption
+NFR-P3
+Horizontal Scalability
+API layer is stateless and can scale across multiple instances behind a load balancer
+6.3 Usability
+ID
+Requirement
+Description
+NFR-U1
+Mobile Responsive
+Voter interface is fully usable on mobile devices, the primary access point for most students
+NFR-U2
+Clear Feedback
+Every action (login, vote submission, errors) gives immediate, plain-language feedback
+NFR-U3
+Accessibility
+Sufficient color contrast, readable font sizes, and keyboard navigability for core flows
+NFR-U4
+Minimal Steps
+A voter can complete authentication and voting in 5 steps or fewer
+NFR-U5
+Portfolio Readability
+Candidate photo and manifesto are presented clearly on the ballot without requiring excessive scrolling or a separate page navigation
+6.4 Reliability and Availability
+ID
+Requirement
+Description
+NFR-R1
+Error Handling
+All failures (network, validation, server) are caught and shown as user-friendly messages, never raw stack traces
+NFR-R2
+Data Durability
+Database is backed up before and after each election window
+NFR-R3
+Graceful Degradation
+If a non-critical service (e.g. email notifications) fails, core voting functionality is unaffected
+6.5 Maintainability and Production Readiness
+ID
+Requirement
+Description
+NFR-M1
+Containerization
+Application is fully Dockerized for consistent local, staging, and production environments
+NFR-M2
+Environment Config
+All environment-specific values are externalized via .env files, with a committed .env.example
+NFR-M3
+Test Coverage
+Critical paths (authentication, vote casting, one-vote enforcement) have automated test coverage
+NFR-M4
+Logging
+Structured application logs are produced for monitoring and debugging in production
+NFR-M5
+Documentation
+README includes setup steps, architecture overview, and security design notes for reviewers/judges
+7. Proposed Technology Stack
+ID
+Requirement
+Description
+Frontend
+React + TypeScript
+Component-driven, type-safe voter and admin interfaces
+Backend
+Node.js (NestJS)
+Modular, scalable service structure matching the architecture in Section 3
+Database
+PostgreSQL
+ACID-compliant storage for votes and election data; row-level locking for one-vote enforcement
+Cache / Queue
+Redis
+Session/rate-limit data, live turnout caching, and background job queue
+Auth
+JWT + bcrypt/argon2
+Stateless session tokens; secure token/password hashing
+Deployment
+Docker + cloud host (Render/Railway)
+Production-ready, reproducible deployment for judges to verify
+Email Delivery
+Transactional email API (e.g. Resend, SendGrid, or Nodemailer + SMTP)
+Automated voting token delivery to each voter on roll upload, plus resend-on-request
+8. Future Scalability Path
+This MVP is intentionally scoped to COMPSSA, but every component is designed to generalize:
+Multi-association support: the data model already separates Election from Organization, so any student body (not just COMPSSA) can run its own election on the same platform
+University-wide elections: the same Voting and Tally services scale from hundreds to thousands of voters by adding API instances and read replicas, with no schema changes
+Voter roll automation: voter upload can later integrate with HTU's official student records system instead of manual CSV upload
+Verifiable receipts: the hash-chain design can be extended into a full cryptographic end-to-end verifiable voting scheme (e.g. mix-nets or homomorphic tallying) as a post-hackathon enhancement
+9. Acceptance Criteria (Demo Checklist)
+To ensure 'no room for failure' against the judging rubric, the system must demonstrably satisfy the following before submission:
+9.1 Architecture & Scalability
+Clear separation of services (Auth, Election, Voting, Tally, Audit) shown in code structure and architecture diagram
+System handles a simulated burst of concurrent votes without double-counting
+9.2 Security & Vulnerability Management
+No plaintext secrets in source code or repo history
+One voter cannot cast two votes, even via repeated/replayed requests
+Basic penetration check passes: no SQL injection or XSS on input fields
+9.3 UI/UX & Workflow
+A first-time voter can complete the full voting flow without instructions, in under 2 minutes
+Admin can create an election and upload a voter roll without touching code
+9.4 Production Readiness
+Application runs via a single documented command (e.g. docker compose up)
+README clearly explains setup, architecture, and security measures for judges
+No crashes or unhandled errors during a full end-to-end demo run-through
+--- END DOC 2 ---
