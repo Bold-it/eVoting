@@ -16,6 +16,7 @@ export const Route = createFileRoute("/results/$electionId")({
 
 function PublicResultsPage() {
   const { electionId } = Route.useParams();
+  const navigate = useNavigate();
   const { data: election } = useQuery({
     queryKey: ["publicElection", electionId],
     queryFn: async () => {
@@ -111,66 +112,143 @@ function PublicResultsPage() {
 }
 
 function PublicPositionCard({ result }: { result: PositionResult }) {
-  const { position, tallies, validVotes, outcome } = result;
+  const { position, tallies, validVotes, outcome, isSingleCandidate } = result;
   const isRunoffResolved = false; // visual flag if this position had been to runoff
+
+  const soleCandidate = isSingleCandidate && tallies[0] ? tallies[0] : null;
+  const isApproved = isSingleCandidate && outcome.kind === "decided" && outcome.winners.length > 0;
+  const yesVotes = isSingleCandidate && soleCandidate ? (soleCandidate.yesVotes || 0) : 0;
+  const noVotes = isSingleCandidate && soleCandidate ? (soleCandidate.noVotes || 0) : 0;
+  const yesPct = validVotes ? (yesVotes / validVotes) * 100 : 0;
+  const noPct = validVotes ? (noVotes / validVotes) * 100 : 0;
+
   const winnerIds =
-    outcome.kind === "decided"
+    !isSingleCandidate && outcome.kind === "decided"
       ? [outcome.winners[0]?.candidate.id]
-      : outcome.kind === "no_majority" && outcome.nextStep === "plurality"
+      : !isSingleCandidate && outcome.kind === "no_majority" && outcome.nextStep === "plurality"
         ? [tallies[0]?.candidate.id]
         : [];
-  const winner = tallies.find((t) => winnerIds.includes(t.candidate.id));
+  const winner = isSingleCandidate 
+    ? (isApproved ? soleCandidate : null)
+    : tallies.find((t) => winnerIds.includes(t.candidate.id));
 
   return (
     <div className="htu-card overflow-hidden">
       <div className="border-b border-border bg-surface/60 px-5 py-3">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{position.title}</p>
-        {isRunoffResolved && (
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {position.title} {isSingleCandidate && "— YES/NO Confirmation Vote"}
+        </p>
+        {isRunoffResolved && !isSingleCandidate && (
           <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700">
             <RefreshCcw className="h-3 w-3" /> Decided by runoff
           </p>
         )}
       </div>
 
-      {winner ? (
-        <div className="flex flex-col gap-4 border-b border-border bg-primary/5 px-5 py-5 sm:flex-row sm:items-center">
-          <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-primary text-xl font-bold text-primary-foreground sm:h-20 sm:w-20">
-            {winner.candidate.name.split(" ").map((s) => s[0]).slice(0, 2).join("")}
-          </div>
-          <div className="min-w-0 flex-1">
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
-              <Trophy className="h-3 w-3" /> Winner
-            </span>
-            <h3 className="mt-1.5 text-xl font-bold text-foreground sm:text-2xl">{winner.candidate.name}</h3>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              <span className="font-semibold tabular-nums text-foreground">{winner.votes.toLocaleString()}</span>{" "}
-              votes · {winner.pct.toFixed(1)}% of valid ballots
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="border-b border-border bg-amber-500/10 px-5 py-3 text-sm font-medium text-amber-800">
-          Awaiting runoff
-        </div>
-      )}
+      {isSingleCandidate ? (
+        <>
+          {isApproved && soleCandidate ? (
+            <div className="flex flex-col gap-4 border-b border-border bg-primary/5 px-5 py-5 sm:flex-row sm:items-center">
+              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-primary text-xl font-bold text-primary-foreground sm:h-20 sm:w-20">
+                {soleCandidate.candidate.name.split(" ").map((s) => s[0]).slice(0, 2).join("")}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
+                  <Trophy className="h-3 w-3" /> Approved & Elected
+                </span>
+                <h3 className="mt-1.5 text-xl font-bold text-foreground sm:text-2xl">{soleCandidate.candidate.name}</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Approved with <span className="font-semibold tabular-nums text-foreground">{yesVotes.toLocaleString()}</span>{" "}
+                  YES votes ({yesPct.toFixed(1)}% of valid ballots)
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="border-b border-border bg-destructive/5 px-5 py-5 flex items-start gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-full bg-destructive/15 text-destructive shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-destructive">Failed Approval</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  The candidate did not receive enough YES votes to be elected. This portfolio remains vacant.
+                </p>
+              </div>
+            </div>
+          )}
 
-      <ul className="divide-y divide-border">
-        {tallies
-          .filter((t) => !winnerIds.includes(t.candidate.id))
-          .map((t) => (
-            <li key={t.candidate.id} className="px-5 py-3">
+          <ul className="divide-y divide-border bg-background/30">
+            {/* YES */}
+            <li className="px-5 py-3.5">
               <div className="mb-1 flex items-center justify-between gap-3">
-                <span className="truncate text-sm text-foreground">{t.candidate.name}</span>
+                <span className="text-sm font-semibold text-success">YES (Approve)</span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {t.votes.toLocaleString()} · {t.pct.toFixed(1)}%
+                  {yesVotes.toLocaleString()} · {yesPct.toFixed(1)}%
                 </span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
-                <div className="h-full bg-primary/50" style={{ width: t.pct + "%" }} />
+                <div className="h-full bg-success" style={{ width: yesPct + "%" }} />
               </div>
             </li>
-          ))}
-      </ul>
+            {/* NO */}
+            <li className="px-5 py-3.5">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-destructive">NO (Reject)</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {noVotes.toLocaleString()} · {noPct.toFixed(1)}%
+                </span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                <div className="h-full bg-destructive" style={{ width: noPct + "%" }} />
+              </div>
+            </li>
+          </ul>
+        </>
+      ) : (
+        <>
+          {winner ? (
+            <div className="flex flex-col gap-4 border-b border-border bg-primary/5 px-5 py-5 sm:flex-row sm:items-center">
+              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-primary text-xl font-bold text-primary-foreground sm:h-20 sm:w-20">
+                {winner.candidate.name.split(" ").map((s) => s[0]).slice(0, 2).join("")}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
+                  <Trophy className="h-3 w-3" /> Winner
+                </span>
+                <h3 className="mt-1.5 text-xl font-bold text-foreground sm:text-2xl">{winner.candidate.name}</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  <span className="font-semibold tabular-nums text-foreground">{winner.votes.toLocaleString()}</span>{" "}
+                  votes · {winner.pct.toFixed(1)}% of valid ballots
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="border-b border-border bg-amber-500/10 px-5 py-3 text-sm font-medium text-amber-800">
+              Awaiting runoff
+            </div>
+          )}
+
+          <ul className="divide-y divide-border">
+            {tallies
+              .filter((t) => !winnerIds.includes(t.candidate.id))
+              .map((t) => (
+                <li key={t.candidate.id} className="px-5 py-3">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="truncate text-sm text-foreground">{t.candidate.name}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {t.votes.toLocaleString()} · {t.pct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                    <div className="h-full bg-primary/50" style={{ width: t.pct + "%" }} />
+                  </div>
+                </li>
+              ))}
+          </ul>
+        </>
+      )}
 
       <div className="flex items-center justify-between bg-surface/40 px-5 py-2.5 text-[11px] text-muted-foreground">
         <span>Total valid votes: {validVotes.toLocaleString()}</span>

@@ -4,6 +4,8 @@ export interface CandidateTally {
   candidate: Candidate;
   votes: number;
   pct: number; // share of valid (non-abstain) votes
+  yesVotes?: number;
+  noVotes?: number;
 }
 
 export type PositionOutcome =
@@ -18,6 +20,9 @@ export interface PositionResult {
   totalCast: number; // candidate votes + abstain
   validVotes: number; // candidate votes only
   outcome: PositionOutcome;
+  isSingleCandidate?: boolean;
+  yesVotes?: number;
+  noVotes?: number;
 }
 
 // Deterministic hash → 0..1 pseudo-random based on a string.
@@ -165,6 +170,7 @@ export function processBackendResults(backendData: any, frontendElection: Electi
       majorityFallback: "plurality",
     };
 
+    const isSingle = posInfo.isSingleCandidate || (posInfo.candidates || []).length === 1;
     const validVotes = posInfo.totalVotes || 0;
     const abstain = Math.max(0, totalCast - validVotes);
 
@@ -173,6 +179,8 @@ export function processBackendResults(backendData: any, frontendElection: Electi
         candidate: { id: c.id, name: c.name, positionId: posInfo.id, photo: c.photoUrl, manifesto: "", credentials: [] },
         votes: c.votes || 0,
         pct: validVotes ? ((c.votes || 0) / validVotes) * 100 : 0,
+        yesVotes: c.yesVotes || 0,
+        noVotes: c.noVotes || 0,
       }))
       .sort((a: CandidateTally, b: CandidateTally) => b.votes - a.votes);
 
@@ -181,6 +189,14 @@ export function processBackendResults(backendData: any, frontendElection: Electi
     
     if (tallies.length === 0 || !top) {
       outcome = { kind: "decided", winners: [] };
+    } else if (isSingle) {
+      const yes = top.yesVotes || 0;
+      const no = top.noVotes || 0;
+      if (yes > no) {
+        outcome = { kind: "decided", winners: [top] };
+      } else {
+        outcome = { kind: "decided", winners: [] }; // No winner/Rejected
+      }
     } else {
       const tiedAtTop = tallies.filter((t) => t.votes === top.votes);
       if (tiedAtTop.length > 1) {
@@ -204,6 +220,9 @@ export function processBackendResults(backendData: any, frontendElection: Electi
       totalCast,
       validVotes,
       outcome,
+      isSingleCandidate: isSingle,
+      yesVotes: isSingle && top ? (top.yesVotes || 0) : undefined,
+      noVotes: isSingle && top ? (top.noVotes || 0) : undefined,
     };
   });
 }

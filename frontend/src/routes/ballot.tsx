@@ -140,63 +140,178 @@ function BallotPage() {
           <fieldset className="divide-y divide-border">
             <legend className="sr-only">Select a candidate for {position.name}</legend>
 
-            {(position.Candidates || []).map((c) => {
-              const isSelected = selected === c.id;
-              return (
-                <div key={c.id} className={isSelected ? "bg-accent/30" : ""}>
-                  <label className="flex cursor-pointer items-start gap-4 px-5 py-4 sm:px-6">
-                    <input
-                      type="radio"
-                      name={position.id}
-                      value={c.id}
-                      checked={isSelected}
-                      onChange={() => votingStore.setSelection(position.id, c.id)}
-                      className="mt-1.5 h-5 w-5 shrink-0 accent-[oklch(0.448_0.157_258)]"
-                    />
-                    {c.photoUrl && (
-                      <img
-                        src={c.photoUrl}
-                        alt=""
-                        className="h-14 w-14 shrink-0 rounded-full border border-border bg-surface object-cover sm:h-16 sm:w-16"
-                      />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-foreground">{c.name}</div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setOpenPortfolio(c.id);
-                        }}
-                        className="mt-1 text-sm font-medium text-primary hover:underline"
-                      >
-                        View Portfolio
-                      </button>
+            {position.Candidates && position.Candidates.length === 1 ? (
+              // Single Candidate YES/NO UI
+              (() => {
+                const c = position.Candidates[0];
+                return (
+                  <div className="divide-y divide-border">
+                    {/* Candidate Display */}
+                    <div className="flex items-start gap-4 px-5 py-5 sm:px-6 bg-surface/40">
+                      {c.photoUrl && (
+                        <img
+                          src={c.photoUrl}
+                          alt=""
+                          className="h-14 w-14 shrink-0 rounded-full border border-border bg-surface object-cover sm:h-16 sm:w-16"
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-foreground">{c.name}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">Sole Candidate</div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setOpenPortfolio(c.id);
+                          }}
+                          className="mt-1.5 text-sm font-medium text-primary hover:underline block"
+                        >
+                          View Portfolio
+                        </button>
+                      </div>
                     </div>
-                  </label>
-                </div>
-              );
-            })}
 
-            {/* Abstain option */}
-            <label
-              className={
-                "flex cursor-pointer items-center gap-4 px-5 py-4 sm:px-6 " +
-                (selected === "ABSTAIN" ? "bg-accent/30" : "")
-              }
-            >
-              <input
-                type="radio"
-                name={position.id}
-                value="ABSTAIN"
-                checked={selected === "ABSTAIN"}
-                onChange={() => votingStore.setSelection(position.id, "ABSTAIN")}
-                className="h-5 w-5 shrink-0 accent-[oklch(0.448_0.157_258)]"
-              />
-              <span className="text-sm text-muted-foreground">
-                Abstain for this position
-              </span>
-            </label>
+                    {/* Voting Choices */}
+                    <div className="p-5 sm:p-6">
+                      <p className="text-sm font-medium text-foreground mb-4">
+                        Do you vote YES or NO to approve {c.name} for this position?
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {/* YES */}
+                        <label
+                          className={
+                            "flex cursor-pointer items-center gap-3 rounded-lg border p-4 transition-colors " +
+                            (selected === c.id
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border hover:bg-surface/50 text-foreground")
+                          }
+                        >
+                          <input
+                            type="radio"
+                            name={position.id}
+                            value={c.id}
+                            checked={selected === c.id}
+                            onChange={() => votingStore.setSelection(position.id, c.id)}
+                            className="h-4 w-4 shrink-0 accent-[oklch(0.448_0.157_258)]"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm">YES</div>
+                            <div className="text-xs text-muted-foreground">Approve candidate</div>
+                          </div>
+                        </label>
+
+                        {/* NO */}
+                        <label
+                          className={
+                            "flex cursor-pointer items-center gap-3 rounded-lg border p-4 transition-colors " +
+                            (selected === `NO_${c.id}`
+                              ? "border-destructive bg-destructive/5 text-destructive"
+                              : "border-border hover:bg-surface/50 text-foreground")
+                          }
+                        >
+                          <input
+                            type="radio"
+                            name={position.id}
+                            value={`NO_${c.id}`}
+                            checked={selected === `NO_${c.id}`}
+                            onChange={() => votingStore.setSelection(position.id, `NO_${c.id}`)}
+                            className="h-4 w-4 shrink-0 accent-destructive"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm">NO</div>
+                            <div className="text-xs text-muted-foreground">Reject candidate</div>
+                          </div>
+                        </label>
+
+                        {/* ABSTAIN */}
+                        <label
+                          className={
+                            "flex cursor-pointer items-center gap-3 rounded-lg border p-4 transition-colors " +
+                            (selected === "ABSTAIN"
+                              ? "border-muted-foreground/50 bg-muted/10 text-foreground"
+                              : "border-border hover:bg-surface/50 text-foreground")
+                          }
+                        >
+                          <input
+                            type="radio"
+                            name={position.id}
+                            value="ABSTAIN"
+                            checked={selected === "ABSTAIN"}
+                            onChange={() => votingStore.setSelection(position.id, "ABSTAIN")}
+                            className="h-4 w-4 shrink-0 accent-muted-foreground"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm">Abstain</div>
+                            <div className="text-xs text-muted-foreground">Neutral vote</div>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              // Multiple Candidates UI (Original)
+              <>
+                {(position.Candidates || []).map((c) => {
+                  const isSelected = selected === c.id;
+                  return (
+                    <div key={c.id} className={isSelected ? "bg-accent/30" : ""}>
+                      <label className="flex cursor-pointer items-start gap-4 px-5 py-4 sm:px-6">
+                        <input
+                          type="radio"
+                          name={position.id}
+                          value={c.id}
+                          checked={isSelected}
+                          onChange={() => votingStore.setSelection(position.id, c.id)}
+                          className="mt-1.5 h-5 w-5 shrink-0 accent-[oklch(0.448_0.157_258)]"
+                        />
+                        {c.photoUrl && (
+                          <img
+                            src={c.photoUrl}
+                            alt=""
+                            className="h-14 w-14 shrink-0 rounded-full border border-border bg-surface object-cover sm:h-16 sm:w-16"
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-foreground">{c.name}</div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setOpenPortfolio(c.id);
+                            }}
+                            className="mt-1 text-sm font-medium text-primary hover:underline"
+                          >
+                            View Portfolio
+                          </button>
+                        </div>
+                      </label>
+                    </div>
+                  );
+                })}
+
+                {/* Abstain option */}
+                <label
+                  className={
+                    "flex cursor-pointer items-center gap-4 px-5 py-4 sm:px-6 " +
+                    (selected === "ABSTAIN" ? "bg-accent/30" : "")
+                  }
+                >
+                  <input
+                    type="radio"
+                    name={position.id}
+                    value="ABSTAIN"
+                    checked={selected === "ABSTAIN"}
+                    onChange={() => votingStore.setSelection(position.id, "ABSTAIN")}
+                    className="h-5 w-5 shrink-0 accent-[oklch(0.448_0.157_258)]"
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    Abstain for this position
+                  </span>
+                </label>
+              </>
+            )}
           </fieldset>
         </div>
 

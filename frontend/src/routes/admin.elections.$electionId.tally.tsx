@@ -186,8 +186,15 @@ function TallyPage() {
 }
 
 function PositionTallyCard({ result }: { result: PositionResult }) {
-  const { position, tallies, abstain, validVotes, outcome } = result;
+  const { position, tallies, abstain, validVotes, outcome, isSingleCandidate } = result;
   const maxVotes = Math.max(1, ...tallies.map((t) => t.votes));
+
+  const isApproved = isSingleCandidate && outcome.kind === "decided" && outcome.winners.length > 0;
+  const soleCandidate = isSingleCandidate && tallies[0] ? tallies[0] : null;
+  const yesVotes = isSingleCandidate && soleCandidate ? (soleCandidate.yesVotes || 0) : 0;
+  const noVotes = isSingleCandidate && soleCandidate ? (soleCandidate.noVotes || 0) : 0;
+  const yesPct = validVotes ? (yesVotes / validVotes) * 100 : 0;
+  const noPct = validVotes ? (noVotes / validVotes) * 100 : 0;
 
   return (
     <div className="htu-card overflow-hidden">
@@ -195,54 +202,121 @@ function PositionTallyCard({ result }: { result: PositionResult }) {
         <div>
           <h3 className="font-semibold text-foreground">{position.title}</h3>
           <p className="text-xs text-muted-foreground">
-            {position.countingMethod === "plurality" ? "Plurality" : "Simple Majority"} ·{" "}
-            {validVotes.toLocaleString()} valid votes
+            {isSingleCandidate
+              ? "YES/NO Confirmation Vote"
+              : position.countingMethod === "plurality" ? "Plurality" : "Simple Majority"}{" "}
+            · {validVotes.toLocaleString()} valid votes
           </p>
         </div>
         <OutcomeBadge result={result} />
       </div>
 
-      <ul className="divide-y divide-border">
-        {tallies.map((t, i) => {
-          const isTopGroup =
-            outcome.kind === "tie"
-              ? outcome.tied.some((x) => x.candidate.id === t.candidate.id)
-              : outcome.kind === "decided"
-                ? outcome.winners[0]?.candidate.id === t.candidate.id
-                : i < 2;
-          return (
-            <li key={t.candidate.id} className="px-5 py-4">
+      {isSingleCandidate && soleCandidate ? (
+        <div className="divide-y divide-border">
+          {/* Candidate Info Header */}
+          <div className="bg-primary/5 px-5 py-4 flex items-center gap-3">
+            <div className="grid h-12 w-12 place-items-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
+              {soleCandidate.candidate.name.split(" ").map((s) => s[0]).slice(0, 2).join("")}
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">{soleCandidate.candidate.name}</p>
+              <p className="text-xs text-muted-foreground">Sole Candidate</p>
+            </div>
+          </div>
+          
+          <ul className="divide-y divide-border">
+            {/* YES Votes */}
+            <li className="px-5 py-4">
               <div className="mb-1.5 flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-sm font-medium text-foreground truncate">{t.candidate.name}</span>
-                  {isTopGroup && outcome.kind === "decided" && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                      <Trophy className="h-3 w-3" /> Winner
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-success">YES (Approve)</span>
+                  {isApproved && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success border border-success/20">
+                      Approved
                     </span>
                   )}
                 </div>
                 <div className="shrink-0 text-sm tabular-nums text-foreground">
-                  <span className="font-semibold">{t.votes.toLocaleString()}</span>{" "}
-                  <span className="text-muted-foreground">({t.pct.toFixed(1)}%)</span>
+                  <span className="font-bold">{yesVotes.toLocaleString()}</span>{" "}
+                  <span className="text-muted-foreground">({yesPct.toFixed(1)}%)</span>
                 </div>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-border">
                 <div
-                  className={
-                    "h-full transition-[width] " +
-                    (outcome.kind === "tie" && isTopGroup
-                      ? "bg-destructive"
-                      : outcome.kind === "no_majority" && isTopGroup
-                        ? "bg-amber-500"
-                        : "bg-primary")
-                  }
-                  style={{ width: (t.votes / maxVotes) * 100 + "%" }}
+                  className="h-full transition-[width] bg-success"
+                  style={{ width: yesPct + "%" }}
                 />
               </div>
             </li>
-          );
-        })}
-      </ul>
+
+            {/* NO Votes */}
+            <li className="px-5 py-4">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-destructive">NO (Reject)</span>
+                  {!isApproved && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive border border-destructive/20">
+                      Rejected
+                    </span>
+                  )}
+                </div>
+                <div className="shrink-0 text-sm tabular-nums text-foreground">
+                  <span className="font-bold">{noVotes.toLocaleString()}</span>{" "}
+                  <span className="text-muted-foreground">({noPct.toFixed(1)}%)</span>
+                </div>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-border">
+                <div
+                  className="h-full transition-[width] bg-destructive"
+                  style={{ width: noPct + "%" }}
+                />
+              </div>
+            </li>
+          </ul>
+        </div>
+      ) : (
+        <ul className="divide-y divide-border">
+          {tallies.map((t, i) => {
+            const isTopGroup =
+              outcome.kind === "tie"
+                ? outcome.tied.some((x) => x.candidate.id === t.candidate.id)
+                : outcome.kind === "decided"
+                  ? outcome.winners[0]?.candidate.id === t.candidate.id
+                  : i < 2;
+            return (
+              <li key={t.candidate.id} className="px-5 py-4">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="text-sm font-medium text-foreground truncate">{t.candidate.name}</span>
+                    {isTopGroup && outcome.kind === "decided" && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                        <Trophy className="h-3 w-3" /> Winner
+                      </span>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-sm tabular-nums text-foreground">
+                    <span className="font-semibold">{t.votes.toLocaleString()}</span>{" "}
+                    <span className="text-muted-foreground">({t.pct.toFixed(1)}%)</span>
+                  </div>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-border">
+                  <div
+                    className={
+                      "h-full transition-[width] " +
+                      (outcome.kind === "tie" && isTopGroup
+                        ? "bg-destructive"
+                        : outcome.kind === "no_majority" && isTopGroup
+                          ? "bg-amber-500"
+                          : "bg-primary")
+                    }
+                    style={{ width: (t.votes / maxVotes) * 100 + "%" }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       <div className="flex items-center justify-between border-t border-border bg-surface/40 px-5 py-2.5 text-xs">
         <span className="font-medium uppercase tracking-wider text-muted-foreground">Abstentions</span>
@@ -253,7 +327,21 @@ function PositionTallyCard({ result }: { result: PositionResult }) {
 }
 
 function OutcomeBadge({ result }: { result: PositionResult }) {
-  const { outcome } = result;
+  const { outcome, isSingleCandidate } = result;
+
+  if (isSingleCandidate) {
+    const isApproved = outcome.kind === "decided" && outcome.winners.length > 0;
+    return isApproved ? (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+        Approved
+      </span>
+    ) : (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-xs font-semibold text-destructive">
+        Rejected
+      </span>
+    );
+  }
+
   if (outcome.kind === "decided") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">

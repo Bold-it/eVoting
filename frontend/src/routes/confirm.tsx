@@ -111,8 +111,31 @@ function ConfirmPage() {
         <div className="htu-card overflow-hidden">
           <ul className="divide-y divide-border">
             {election?.Positions?.map((p: any) => {
+              const isSingle = p.Candidates?.length === 1;
               const sel = state.selections[p.id];
-              const cand = p.Candidates?.find((c: any) => c.id === sel);
+              let displayName = "No selection";
+              let imageToShow = null;
+              
+              if (isSingle && p.Candidates?.[0]) {
+                const c = p.Candidates[0];
+                imageToShow = c.photoUrl;
+                if (sel === c.id) {
+                  displayName = `Yes (Approve ${c.name})`;
+                } else if (typeof sel === 'string' && sel.startsWith("NO_")) {
+                  displayName = `No (Reject ${c.name})`;
+                } else if (sel === "ABSTAIN") {
+                  displayName = "Abstained";
+                }
+              } else {
+                const cand = p.Candidates?.find((c: any) => c.id === sel);
+                if (cand) {
+                  displayName = cand.name;
+                  imageToShow = cand.photoUrl;
+                } else if (sel === "ABSTAIN") {
+                  displayName = "Abstained";
+                }
+              }
+
               return (
                 <li key={p.id} className="flex items-center justify-between gap-4 px-5 py-4 sm:px-6">
                   <div className="min-w-0">
@@ -120,12 +143,12 @@ function ConfirmPage() {
                       {p.name}
                     </p>
                     <p className="mt-0.5 truncate font-medium text-foreground">
-                      {cand ? cand.name : sel === "ABSTAIN" ? "Abstained" : "No selection"}
+                      {displayName}
                     </p>
                   </div>
-                  {cand?.photoUrl && (
+                  {imageToShow && (
                     <img
-                      src={cand.photoUrl}
+                      src={imageToShow}
                       alt=""
                       className="h-12 w-12 shrink-0 rounded-full border border-border object-cover"
                     />

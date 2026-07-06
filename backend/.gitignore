@@ -10,9 +10,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Lovable IDE metadata
-.lovable/
-**/.lovable/
-
-# Scripts
-create_repo.js
+# Uploads
+public/uploads/
